@@ -1,0 +1,6 @@
+.git
+.claude/
+.gitignore
+.DS_Store
+bin/
+.github/

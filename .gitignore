@@ -1,0 +1,6 @@
+.claude/
+bin/
+
+.env
+.env.dev
+.env.prod

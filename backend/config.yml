@@ -1,0 +1,17 @@
+listeners:
+  public:
+    addr: :${PUBLIC_PORT:-8080}
+  admin:
+    addr: :${ADMIN_PORT:-9090}
+observability:
+  logs:
+    level: ${LOG_LEVEL:-info}
+  metrics:
+    enabled: ${METRICS_ENABLED:-false}
+defaults:
+  timeouts:
+    request: ${REQUEST_TIMEOUT:-30s}
+    upstream_response_header: ${UPSTREAM_RESPONSE_HEADER_TIMEOUT:-30s}
+  body_limit: ${BODY_LIMIT:-1MB}
+shutdown:
+  timeout: ${SHUTDOWN_TIMEOUT:-5s}

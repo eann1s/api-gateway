@@ -1,0 +1,12 @@
+services:
+  app:
+    image: ${BACKEND_DOCKER_IMAGE}
+    ports:
+      - ${PORT}:${PORT}
+    networks:
+      - dev
+
+networks:
+  dev:
+    driver: bridge
+    external: true
