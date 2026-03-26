@@ -1,8 +1,9 @@
 services:
   app:
     image: ${BACKEND_DOCKER_IMAGE}
+    env_file: .env.dev
     ports:
-      - ${PORT}:${PORT}
+      - ${PUBLIC_PORT}:${PUBLIC_PORT}
     networks:
       - dev
 

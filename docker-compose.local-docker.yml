@@ -3,5 +3,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    env_file: .env
     ports:
-      - ${PORT}:${PORT}
+      - ${ADMIN_PORT}:${ADMIN_PORT}
+      - ${PUBLIC_PORT}:${PUBLIC_PORT}
