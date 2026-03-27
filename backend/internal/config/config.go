@@ -17,31 +17,40 @@ type Config struct {
 	Shutdown ShutdownConfig `yaml:"shutdown"`
 }
 
+
+type PublicListenerConfig struct {
+	Addr string `yaml:"addr"`
+}
+type AdminListenerConfig struct {
+	Addr string `yaml:"addr"`
+}
 type ListenersConfig struct {
-	Public struct {
-		Addr string `yaml:"addr"`
-	}
-	Admin struct {
-		Addr string `yaml:"addr"`
-	}
+	Public PublicListenerConfig
+	Admin AdminListenerConfig
 }
 
+
+type LogsConfig struct {
+	Level string `yaml:"level"`
+}
+type MetricsConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
 type ObservabilityConfig struct {
-	Logs struct {
-		Level string `yaml:"level"`
-	}
-	Metrics struct {
-		Enabled bool `yaml:"enabled"`
-	}
+	Logs LogsConfig
+	Metrics MetricsConfig
 }
 
+
+type TimeoutsConfig struct {
+	Request time.Duration `yaml:"request"`
+	UpstreamResponseHeader time.Duration `yaml:"upstream_response_header"`
+}
 type DefaultsConfig struct {
-	Timeouts struct {
-		Request time.Duration `yaml:"request"`
-		UpstreamResponseHeader time.Duration `yaml:"upstream_response_header"`
-	}
+	Timeouts TimeoutsConfig
 	BodyLimit ByteSize `yaml:"body_limit"`
 }
+
 
 type ShutdownConfig struct {
 	Timeout time.Duration `yaml:"timeout"`

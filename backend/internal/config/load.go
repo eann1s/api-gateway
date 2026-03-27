@@ -11,8 +11,8 @@ import (
 )
 
 
-func Load(p string) (Config, error) {
-	bytes, err := os.ReadFile(p)
+func Load(path string) (Config, error) {
+	bytes, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, err
 	}
