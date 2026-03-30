@@ -31,10 +31,12 @@ func NewApp(readiness readiness.Readiness, cfg config.Config, logger zerolog.Log
 }
 
 func (app *App) Run(ctx context.Context) error {
+	app.logger.Info().Msg("starting app")
 	errCh := make(chan error, 2)
 
 	publicLn, err := net.Listen("tcp", app.cfg.Listeners.Public.Addr)
 	if err != nil {
+		app.logger.Error().Err(err).Msg("failed to start public listener")
 		return err
 	}
 
@@ -42,22 +44,31 @@ func (app *App) Run(ctx context.Context) error {
 	if err != nil {
 		errr := publicLn.Close()
 		if errr != nil {
-			return errors.Join(err, errr)
+			joined := errors.Join(err, errr)
+			app.logger.Error().Err(joined).Msg("failed to close public listener after admin listener failed to start")
+			return joined
 		}
+		app.logger.Error().Err(err).Msg("failed to start admin listener")
 		return err
 	}
 
 	app.readiness.SetReady(true)
+	app.logger.Info().
+		Str("public_addr", publicLn.Addr().String()).
+		Str("admin_addr", adminLn.Addr().String()).
+		Msg("app started")
 
 	go func() {
 		err := app.public.Serve(publicLn)
 		if err != nil && err != http.ErrServerClosed {
+			app.logger.Error().Err(err).Msg("public server error")
 			errCh <- err
 		}
 	}()
 	go func() {
 		err := app.admin.Serve(adminLn)
 		if err != nil && err != http.ErrServerClosed {
+			app.logger.Error().Err(err).Msg("admin server error")
 			errCh <- err
 		}
 	}()
@@ -69,23 +80,28 @@ func (app *App) Run(ctx context.Context) error {
 		}
 		return err
 	case <-ctx.Done():
+		app.logger.Info().Msg("shutdown requested")
 		if err := app.shutdownWithTimeout(); err != nil {
 			return err
 		}
 	}
 
+	app.logger.Info().Msg("app exited")
 	return nil
 }
 
 func (app *App) Shutdown(ctx context.Context) error {
 	app.readiness.SetReady(false)
+	app.logger.Info().Msg("shutting down app")
 
 	var publicErr error
 	var adminErr error
 	if err := app.public.Shutdown(ctx); err != nil && err != http.ErrServerClosed {
+		app.logger.Error().Err(err).Msg("failed to shutdown public server")
 		publicErr = err
 	}
 	if err := app.admin.Shutdown(ctx); err != nil && err != http.ErrServerClosed {
+		app.logger.Error().Err(err).Msg("failed to shutdown admin server")
 		adminErr = err
 	}
 	return errors.Join(publicErr, adminErr)
