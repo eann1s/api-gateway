@@ -47,32 +47,29 @@ func AccessLog(log zerolog.Logger) Middleware {
 			wrapper := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(wrapper, r)
 			duration := time.Since(startTime)
+			status := wrapper.status
 
-			reqID, ok := requestid.FromContext(r.Context())
-			if !ok {
-				log.Warn().
-					Str("method", r.Method).
-					Str("path", r.URL.Path).
-					Int("status", wrapper.status).
-					Msg("request id was not set")
-			}
-			if wrapper.status >= http.StatusBadRequest {
-				log.Error().
-					Str("request_id", reqID).
-					Str("method", r.Method).
-					Str("path", r.URL.Path).
-					Int("status", wrapper.status).
-					Dur("duration", duration).
-					Msg("request failed")
+			var level zerolog.Level
+			var msg string
+			if status >= http.StatusBadRequest {
+				msg = "request failed"
+				level = zerolog.ErrorLevel
 			} else {
-				log.Info().
-					Str("request_id", reqID).
-					Str("method", r.Method).
-					Str("path", r.URL.Path).
-					Int("status", wrapper.status).
-					Dur("duration", duration).
-					Msg("successful request")
+				msg = "request successful"
+				level = zerolog.InfoLevel
 			}
+			ev := log.
+				WithLevel(level).
+				Str("method", r.Method).
+				Str("path", r.URL.Path).
+				Int("status", wrapper.status).
+				Dur("duration", duration)
+
+			reqID, ok := requestid.FromContext(r.Context()) 
+			if ok && reqID != "" {
+				ev = ev.Str("request_id", reqID)
+			}
+			ev.Msg(msg)
 		})
 	}
 }
