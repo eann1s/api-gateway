@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -25,9 +26,9 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	errors := Validate(&cfg)
-	if errors != nil && len(errors) > 0 {
-		return Config{}, fmt.Errorf("Errors: %v", errors)
+	errs := Validate(&cfg)
+	if errs != nil && len(errs) > 0 {
+		return Config{}, errors.Join(errs...)
 	}
 	return cfg, nil
 }

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,19 @@ observability:
     level: "info"
   metrics:
     enabled: false
+defaults:
+  timeouts:
+    request: 30s
+    upstream_response_header: 30s
+  body_limit: 1MB
+shutdown:
+  timeout: 5s
+
+routes:
+  - id: root
+    host: api.example.com
+    path_prefix: /
+    upstream_pool: main-pool
 `
 
 func TestLoad_Success_WithValidYAML(t *testing.T) {
@@ -45,42 +59,93 @@ func TestLoad_Fails_OnValidationError(t *testing.T) {
 	tests := []struct{
 		name string
 		yaml string
-		want string
+		wantErr error
+		wantErrMessage string
 	} {
 		{
 			name: "invalid yaml",
 			yaml: "invalid yaml",
-			want: "yaml:",	
-		},
-		{
-			name: "invalid log level",
-			yaml: strings.ReplaceAll(validYAML, "info", "invalid"),
-			want: "Invalid log level value",
+			wantErrMessage: "yaml: unmarshal error",	
 		},
 		{
 			name: "invalid public listener port string",
 			yaml: strings.ReplaceAll(validYAML, ":8080", "invalid"),
-			want: "Invalid public listener address",
+			wantErr: ErrInvalidListenersConfig,
 		},
 		{
 			name: "invalid public listener port number",
 			yaml: strings.ReplaceAll(validYAML, ":8080", ":-1"),
-			want: "Public listener should be between 1 and 65535",
+			wantErr: ErrInvalidListenersConfig,
 		},
 		{
 			name: "invalid admin listener port string",
 			yaml: strings.ReplaceAll(validYAML, ":9090", "invalid"),
-			want: "Invalid admin listener address",
+			wantErr: ErrInvalidListenersConfig,
 		},
 		{
 			name: "invalid admin listener port number",
 			yaml: strings.ReplaceAll(validYAML, ":9090", ":65536"),
-			want: "Admin listener should be between 1 and 65535",
+			wantErr: ErrInvalidListenersConfig,
 		},
 		{
 			name: "same admin and public listener ports",
 			yaml: strings.ReplaceAll(validYAML, ":9090", ":8080"),
-			want: "Public and admin listener should be different",
+			wantErr: ErrInvalidListenersConfig,
+		},
+		{
+			name: "invalid log level",
+			yaml: strings.ReplaceAll(validYAML, "info", "invalid"),
+			wantErr: ErrInvalidObservabilityConfig,
+		},
+		{
+			name: "invalid request timeout",
+			yaml: strings.ReplaceAll(validYAML, "request: 30s", "request: -1s"),
+			wantErr: ErrInvalidDefaultsConfig,
+		},
+		{
+			name: "invalid upstream response header timeout",
+			yaml: strings.ReplaceAll(validYAML, "upstream_response_header: 30s", "upstream_response_header: -1s"),
+			wantErr: ErrInvalidDefaultsConfig,
+		},
+		{
+			name: "invalid body limit value",
+			yaml: strings.ReplaceAll(validYAML, "1MB", "0MB"),
+			wantErr: ErrInvalidByteSize,
+		},
+		{
+			name: "invalid body limit unit",
+			yaml: strings.ReplaceAll(validYAML, "1MB", "1PT"),
+			wantErr: ErrInvalidByteUnit,
+		},
+		{
+			name: "invalid shutdown timeout",
+			yaml: strings.ReplaceAll(validYAML, "timeout: 5s", "timeout: -1s"),
+			wantErr: ErrInvalidShutdownConfig,
+		},
+		{
+			name: "empty routes",
+			yaml: strings.SplitN(validYAML, "routes:", 2)[0],
+			wantErr: ErrInvalidRoutesConfig,
+		},
+		{
+			name: "empty route id",
+			yaml: strings.ReplaceAll(validYAML, "id: root", ""),
+			wantErr: ErrInvalidRoutesConfig,
+		},
+		{
+			name: "empty route host",
+			yaml: strings.ReplaceAll(validYAML, "host: api.example.com", ""),
+			wantErr: ErrInvalidRoutesConfig,
+		},
+		{
+			name: "empty route path prefix",
+			yaml: strings.ReplaceAll(validYAML, "path_prefix: /", ""),
+			wantErr: ErrInvalidRoutesConfig,
+		},
+		{
+			name: "empty route upstream pool",
+			yaml: strings.ReplaceAll(validYAML, "upstream_pool: main-pool", ""),
+			wantErr: ErrInvalidRoutesConfig,
 		},
 	}
 
@@ -96,8 +161,11 @@ func TestLoad_Fails_OnValidationError(t *testing.T) {
 				t.Fatal("expected error, got nil")
 			}
 
-			if !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("expected error to contain %q, got %q", tt.want, err.Error())
+			if tt.wantErrMessage != "" && !strings.Contains(err.Error(), tt.wantErrMessage) {
+				t.Fatalf("expected error to contain %q, got %q", tt.wantErrMessage, err.Error())
+			}
+			if tt.wantErr != nil && !errors.Is(err, tt.wantErr) { 
+				t.Fatalf("expected error to be %v, got %v", tt.wantErr, err)
 			}
 		})
 	}

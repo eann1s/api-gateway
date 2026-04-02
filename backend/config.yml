@@ -15,3 +15,9 @@ defaults:
   body_limit: ${BODY_LIMIT:-1MB}
 shutdown:
   timeout: ${SHUTDOWN_TIMEOUT:-5s}
+
+routes:
+  - id: root
+    host: api.example.com
+    path_prefix: /
+    upstream_pool: main-pool

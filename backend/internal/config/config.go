@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -15,6 +16,7 @@ type Config struct {
 	Observability ObservabilityConfig `yaml:"observability"`
 	Defaults DefaultsConfig `yaml:"defaults"`
 	Shutdown ShutdownConfig `yaml:"shutdown"`
+	Routes []RouteConfig `yaml:"routes"`
 }
 
 
@@ -56,8 +58,16 @@ type ShutdownConfig struct {
 	Timeout time.Duration `yaml:"timeout"`
 }
 
+type RouteConfig struct {
+	ID string `yaml:"id"`
+	Host string `yaml:"host"`
+	PathPrefix string `yaml:"path_prefix"`
+	UpstreamPool string `yaml:"upstream_pool"`
+}
 
 type ByteSize int64
+var ErrInvalidByteSize = errors.New("invalid size")
+var ErrInvalidByteUnit = errors.New("invalid unit")
 
 var sizeRe = regexp.MustCompile(`^\s*([0-9]+)\s*([A-Za-z]+)?\s*$`)
 var multipliers = map[string]int64{
@@ -85,12 +95,12 @@ func ParseByteSize(s string) (ByteSize, error) {
 		return ByteSize(0), err
 	}
 	if num <= 0 {
-		return ByteSize(0), fmt.Errorf("invalid size %q", s)
+		return ByteSize(0), fmt.Errorf("%w: %q", ErrInvalidByteSize, s)
 	}
 
 	multiplier, ok := multipliers[unit]
 	if !ok {
-		return ByteSize(0), fmt.Errorf("invalid unit %q", unit)
+		return ByteSize(0), fmt.Errorf("%w: %q",ErrInvalidByteUnit, unit)
 	}
 	
 	num, err = mulChecked(num, multiplier)
