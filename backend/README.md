@@ -1,46 +1,39 @@
 # Gateway Backend
 
-Gateway Backend is a Go service for API gateway and rate-limiter workloads.
+Go backend service for API gateway and rate-limiter workloads.
 
-## Features
+## Capabilities
 
 - YAML config loading with env substitution
-- Config validation on startup
-- Separate public and admin listeners
+- Startup config validation (including duration and byte-size parsing)
+- Separate public and admin HTTP listeners
 - Graceful shutdown on `SIGINT` / `SIGTERM`
 - Admin endpoints: `/healthz`, `/readyz`, `/metrics`
-- Structured JSON logging
+- Structured JSON logging (`zerolog`)
+- Request middleware: request ID + access logs
+- Router core module (`internal/router`) with host + path-prefix matching
 
 ## Requirements
 
 - Go `1.25+`
 - `make`
-- `golangci-lint` (for `make lint`)
+- `golangci-lint` (optional, for `make lint`)
 
 ## Quick Start
 
-Run from the `backend` directory:
+From the `backend` directory:
 
 ```bash
 cd backend
-make run
-```
-
-The app loads config from `./config.yml` by default.
-
-If you want an explicit config path:
-
-```bash
 go run ./cmd/rate-limiter --config ./config.yml
 ```
 
-## Verify Endpoints
-
 By default:
+
 - public listener: `:8080`
 - admin listener: `:9090`
 
-Checks:
+## Health and Metrics
 
 ```bash
 curl -i http://localhost:9090/healthz
@@ -48,10 +41,11 @@ curl -i http://localhost:9090/readyz
 curl -i http://localhost:9090/metrics
 ```
 
-Expected:
+Expected behavior:
+
 - `/healthz` -> `200`
-- `/readyz` -> `200` when the app is ready, `503` during startup/shutdown
-- `/metrics` -> `200` with Prometheus metrics output
+- `/readyz` -> `200` when ready, `503` during startup/shutdown
+- `/metrics` -> Prometheus metrics output
 
 ## Configuration
 
@@ -79,32 +73,26 @@ shutdown:
   timeout: ${SHUTDOWN_TIMEOUT:-5s}
 ```
 
-### Env Substitution
+Env substitution rules:
 
-- `${VAR}`: variable must exist, otherwise startup fails
-- `${VAR:-default}`: uses `default` if variable is not set
-- Process environment variables override values loaded from `.env`
+- `${VAR}` -> variable must exist
+- `${VAR:-default}` -> fallback to `default` when missing
+- process env overrides `.env` values
 
-## Development Commands
+## Build and Dev Commands
 
 ```bash
+cd backend
 make help
 make test
 make lint
-make build
-make run
-```
-
-## Build Binary
-
-```bash
-make build
-./bin/backend --config ./config.yml
+make build APP=rate-limiter
+./bin/rate-limiter --config ./config.yml
 ```
 
 ## Docker
 
-Build image:
+Build:
 
 ```bash
 docker build -t gateway-backend:dev --build-arg VERSION=dev ./backend
@@ -119,24 +107,26 @@ docker run --rm -p 8080:8080 -p 9090:9090 gateway-backend:dev
 ## Troubleshooting
 
 - `undefined environment variable "..."`
-  - Add the variable to your environment or use `${VAR:-default}` in config.
+  - set variable in environment, or use `${VAR:-default}` in config
 
 - `Invalid log level value "..."`
-  - Allowed levels: `debug`, `info`, `warn`, `error`.
+  - allowed: `debug`, `info`, `warn`, `error`
 
 - `listen tcp ...: bind: address already in use`
-  - Change `PUBLIC_PORT` / `ADMIN_PORT` or stop the process that already uses the port.
+  - change `PUBLIC_PORT` / `ADMIN_PORT` or stop conflicting process
 
 - `/readyz` returns `503`
-  - The app is not ready yet or is shutting down.
+  - app is still starting or already shutting down
 
 ## Project Layout
 
 ```text
 cmd/rate-limiter/        # entrypoint
-internal/app/            # app lifecycle (run/shutdown)
-internal/config/         # config load/defaults/validation
-internal/transport/http/ # HTTP handlers and mux
-internal/middleware/     # request id and access log middleware
-internal/obs/            # logger factory
+internal/app/            # lifecycle orchestration
+internal/config/         # config load + validation
+internal/router/         # route normalization and matching core
+internal/transport/http/ # admin/public handlers and mux
+internal/middleware/     # request id and access logs
+internal/obs/            # logger setup
+internal/readiness/      # readiness state/probe abstraction
 ```

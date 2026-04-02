@@ -2,7 +2,7 @@ SHELL := /usr/bin/env bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
 
-APP ?= $(shell basename $(CURDIR))
+APP ?= rate-limiter
 GO ?= go
 CMD_DIR ?= ./cmd/$(APP)
 BIN_DIR ?= ./bin
