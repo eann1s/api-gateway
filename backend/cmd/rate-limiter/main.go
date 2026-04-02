@@ -14,6 +14,7 @@ import (
 	"github.com/eann1s/rate-limiter/backend/internal/middleware"
 	"github.com/eann1s/rate-limiter/backend/internal/obs"
 	"github.com/eann1s/rate-limiter/backend/internal/readiness"
+	"github.com/eann1s/rate-limiter/backend/internal/router"
 	http_admin "github.com/eann1s/rate-limiter/backend/internal/transport/http/admin"
 	http_public "github.com/eann1s/rate-limiter/backend/internal/transport/http/public"
 	"github.com/prometheus/client_golang/prometheus"
@@ -52,9 +53,21 @@ func run() error {
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
 
+	routes := toRouterRoutes(cfg.Routes)
+	router, err := router.NewRouter(routes)
+	if err != nil {
+		return err
+	}
+
 	readiness := &readiness.AtomicReadiness{}
-	publicSrv := newPublicSrv(log, cfg)
-	adminSrv := newAdminSrv(log, cfg, readiness, reg)
+	publicSrv, err := newPublicSrv(log, cfg, router)
+	if err != nil {
+		return err
+	}
+	adminSrv, err := newAdminSrv(log, cfg, readiness, reg)
+	if err != nil {
+		return err
+	}
 	app := app.NewApp(readiness, cfg, log, publicSrv, adminSrv)
 
 	log.Info().Msg("starting gateway")
@@ -71,9 +84,15 @@ func run() error {
 	return nil
 }
 
-func newPublicSrv(log zerolog.Logger, cfg config.Config) *http.Server {
-	deps := http_public.Deps{}
-	h := http_public.NewHandlers(deps)
+func newPublicSrv(log zerolog.Logger, cfg config.Config, router *router.Router) (*http.Server, error) {
+	deps := http_public.Deps{
+		Router: router, 
+		Next: func(w http.ResponseWriter, r *http.Request) {},
+	}
+	h, err := http_public.NewHandlers(deps)
+	if err != nil {
+		return nil, err
+	}
 	mux := http_public.NewPublicMux(h)
 	handler := middleware.Chain(mux, middleware.RequestID, middleware.AccessLog(log))
 	return &http.Server{
@@ -81,10 +100,10 @@ func newPublicSrv(log zerolog.Logger, cfg config.Config) *http.Server {
 		Addr: cfg.Listeners.Public.Addr,
 		ReadTimeout: cfg.Defaults.Timeouts.Request,
 		ReadHeaderTimeout: cfg.Defaults.Timeouts.UpstreamResponseHeader,
-	}
+	}, nil
 }
 
-func newAdminSrv(log zerolog.Logger, cfg config.Config, readiness readiness.Readiness, reg *prometheus.Registry) *http.Server {
+func newAdminSrv(log zerolog.Logger, cfg config.Config, readiness readiness.Readiness, reg *prometheus.Registry) (*http.Server, error) {
 	deps := http_admin.Deps{
 		Ready: readiness.IsReady,
 		Metrics: promhttp.HandlerFor(reg, promhttp.HandlerOpts{}),
@@ -97,6 +116,19 @@ func newAdminSrv(log zerolog.Logger, cfg config.Config, readiness readiness.Read
 		Addr: cfg.Listeners.Admin.Addr,
 		ReadTimeout: cfg.Defaults.Timeouts.Request,
 		ReadHeaderTimeout: cfg.Defaults.Timeouts.UpstreamResponseHeader,
+	}, nil
+}
+
+func toRouterRoutes(routes []config.RouteConfig) []router.Route {
+	rr := make([]router.Route, len(routes))
+	for i, r := range routes {
+		rr[i] = router.Route{
+			ID: r.ID,
+			Host: r.Host,
+			PathPrefix: r.PathPrefix,
+			UpstreamPool: r.UpstreamPool,
+		}
 	}
+	return rr
 }
 
