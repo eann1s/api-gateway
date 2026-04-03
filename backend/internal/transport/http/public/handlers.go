@@ -41,7 +41,7 @@ func (h *Handlers) Root(w http.ResponseWriter, r *http.Request) {
 	if err == nil && res != "" {
 		host = res
 	}
-	path := r.URL.Path
+	path := strings.TrimSpace(r.URL.Path)
 	route, ok := h.deps.Router.Match(host, path)
 	if !ok {
 		w.WriteHeader(http.StatusNotFound)
