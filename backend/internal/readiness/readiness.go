@@ -1,6 +1,8 @@
 package readiness
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+)
 
 
 type Readiness interface {

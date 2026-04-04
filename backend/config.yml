@@ -21,3 +21,10 @@ routes:
     host: api.example.com
     path_prefix: /
     upstream_pool: main-pool
+
+upstream_pools:
+  - id: main-pool
+    targets:
+      - "http://svc-a:8081"
+      - "http://svc-a:8082"
+  

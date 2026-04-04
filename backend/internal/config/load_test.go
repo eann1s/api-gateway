@@ -34,6 +34,12 @@ routes:
     host: api.example.com
     path_prefix: /
     upstream_pool: main-pool
+
+upstream_pools:
+  - id: main-pool
+    targets:
+      - "http://svc-a:8081"
+      - "http://svc-a:8082"
 `
 
 func TestLoad_Success_WithValidYAML(t *testing.T) {
@@ -147,6 +153,47 @@ func TestLoad_Fails_OnValidationError(t *testing.T) {
 			yaml: strings.ReplaceAll(validYAML, "upstream_pool: main-pool", ""),
 			wantErr: ErrInvalidRoutesConfig,
 		},
+		{
+			name: "empty upstream pools",
+			yaml: strings.SplitN(validYAML, "upstream_pools:", 2)[0],
+			wantErr: ErrInvalidUpstreamPoolsConfig,
+		},
+		{
+			name: "empty upstream pool id",
+			yaml: strings.ReplaceAll(validYAML, "id: main-pool", "id:"),
+			wantErr: ErrInvalidUpstreamPoolsConfig,
+		},
+		{
+			name: "empty upstream targets",
+			yaml: strings.SplitN(validYAML, "targets:", 2)[0],
+			wantErr: ErrInvalidUpstreamPoolsConfig,
+		},
+		{
+			name: "invalid upstream target",
+			yaml: strings.ReplaceAll(validYAML, "http://svc-a:8081", "assada:/123123;312"),
+			wantErr: ErrInvalidUpstreamPoolsConfig,
+		},
+		{
+			name: "invalid upstream target scheme",
+			yaml: strings.ReplaceAll(validYAML, "http://svc-a:8081", "wss://svc-a:8081"),
+			wantErr: ErrInvalidUpstreamPoolsConfig,
+		},
+		{
+			name: "nonempty upstream target path",
+			yaml: strings.ReplaceAll(validYAML, "http://svc-a:8081", "http://svc-a:8081/api/v1"),
+			wantErr: ErrInvalidUpstreamPoolsConfig,
+		},
+		{
+			name: "upstream target path with tailing slash",
+			yaml: strings.ReplaceAll(validYAML, "http://svc-a:8081", "http://svc-a:8081/"),
+			wantErr: ErrInvalidUpstreamPoolsConfig,
+		},
+		{
+			name: "missing upstream pool referenced in routes",
+			yaml: strings.ReplaceAll(validYAML, "id: main-pool", "id: missing-pool"),
+			wantErr: ErrInvalidUpstreamPoolsConfig,
+		},
+		
 	}
 
 	for _, tt := range tests {

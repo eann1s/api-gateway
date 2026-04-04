@@ -17,6 +17,7 @@ type Config struct {
 	Defaults DefaultsConfig `yaml:"defaults"`
 	Shutdown ShutdownConfig `yaml:"shutdown"`
 	Routes []RouteConfig `yaml:"routes"`
+	UpstreamPools []UpstreamPoolConfig `yaml:"upstream_pools"`
 }
 
 
@@ -63,6 +64,11 @@ type RouteConfig struct {
 	Host string `yaml:"host"`
 	PathPrefix string `yaml:"path_prefix"`
 	UpstreamPool string `yaml:"upstream_pool"`
+}
+
+type UpstreamPoolConfig struct {
+	ID string `yaml:"id"`
+	Targets []string `yaml:"targets"`
 }
 
 type ByteSize int64
