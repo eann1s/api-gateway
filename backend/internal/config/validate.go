@@ -115,7 +115,7 @@ func Validate(c *Config) []error {
 				errs = append(errs, fmt.Errorf("%w, invalid upstream pool target %q, scheme must be http or https", ErrInvalidUpstreamPoolsConfig, t))
 			}
 			if u.Path != "" {
-				errs = append(errs, fmt.Errorf("%w, invalid upstream pool target %q, path must be empty and no tailing slash", ErrInvalidUpstreamPoolsConfig, t))
+				errs = append(errs, fmt.Errorf("%w, invalid upstream pool target %q, path must be empty and no trailing slash", ErrInvalidUpstreamPoolsConfig, t))
 			}
 			
 		}

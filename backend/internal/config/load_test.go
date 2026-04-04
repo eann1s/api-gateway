@@ -184,7 +184,7 @@ func TestLoad_Fails_OnValidationError(t *testing.T) {
 			wantErr: ErrInvalidUpstreamPoolsConfig,
 		},
 		{
-			name: "upstream target path with tailing slash",
+			name: "upstream target path with trailing slash",
 			yaml: strings.ReplaceAll(validYAML, "http://svc-a:8081", "http://svc-a:8081/"),
 			wantErr: ErrInvalidUpstreamPoolsConfig,
 		},
