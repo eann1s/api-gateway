@@ -6,6 +6,16 @@ services:
       - ${PUBLIC_PORT}:${PUBLIC_PORT}
     networks:
       - dev
+  
+  redis:
+    image: redis:8.6.2-alpine
+    ports:
+      - ${REDIS_EXTERNAL_PORT}:6379
+    volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    networks:
+      - dev
 
 networks:
   dev:

@@ -6,6 +6,14 @@ services:
       - ${PUBLIC_PORT}:${PUBLIC_PORT}
     networks:
       - prod
+  
+  redis:
+    image: redis:8.6.2-alpine
+    volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    networks:
+      - prod
 
 networks:
   prod:

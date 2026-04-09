@@ -1,0 +1,5 @@
+services:
+  redis:
+    image: redis:8.6.2-alpine
+    ports:
+      - ${REDIS_EXTERNAL_PORT}:6379
