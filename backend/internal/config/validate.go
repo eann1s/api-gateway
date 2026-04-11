@@ -6,6 +6,7 @@ import (
 	"net"
 	url "net/url"
 	"strconv"
+	"strings"
 )
 
 var logLevels = map[string]bool{
@@ -20,6 +21,8 @@ var (
 	ErrInvalidObservabilityConfig = errors.New("Invalid observability config")
 	ErrInvalidDefaultsConfig = errors.New("Invalid defaults config")
 	ErrInvalidShutdownConfig = errors.New("Invalid shutdown config")
+	ErrInvalidRateLimitConfig = errors.New("Invalid rate limit config")
+	ErrInvalidRedisConfig = errors.New("Invalid redis config")
 	ErrInvalidRoutesConfig = errors.New("Invalid routes config")
 	ErrInvalidUpstreamPoolsConfig = errors.New("Invalid upstream pools config")
 )
@@ -73,6 +76,34 @@ func Validate(c *Config) []error {
 	if c.Shutdown.Timeout <= 0 {
 		errs = append(errs, fmt.Errorf("%w, invalid shutdown timeout value %q", ErrInvalidShutdownConfig, c.Shutdown.Timeout))
 	}
+
+	if c.RateLimit.Capacity <= 0 {
+		errs = append(errs, fmt.Errorf("%w, capacity should be greater than 0 %q", ErrInvalidRateLimitConfig, c.RateLimit.Capacity))
+	}
+	if c.RateLimit.RefillRatePerSec <= 0 {
+		errs = append(errs, fmt.Errorf("%w, refill rate per second should be greater than 0 %q", ErrInvalidRateLimitConfig, c.RateLimit.RefillRatePerSec))
+	}
+	if c.RateLimit.KeyPrefix != "" && strings.TrimSpace(c.RateLimit.KeyPrefix) == "" {
+		errs = append(errs, fmt.Errorf("%w, key prefix should not be empty %q", ErrInvalidRateLimitConfig, c.RateLimit.KeyPrefix))
+	}
+	c.RateLimit.KeyPrefix = strings.TrimSuffix(strings.TrimSpace(c.RateLimit.KeyPrefix), ":")
+
+	if c.Redis.Addr == "" {
+		errs = append(errs, fmt.Errorf("%w, redis address is required", ErrInvalidRedisConfig))
+	}
+	if _, err := url.Parse(c.Redis.Addr); err != nil {
+		errs = append(errs, fmt.Errorf("%w, invalid redis address %q, err: %v", ErrInvalidRedisConfig, c.Redis.Addr, err))
+	}
+	if host, port, err := net.SplitHostPort(c.Redis.Addr); err != nil || host == "" || port == "" {
+		errs = append(errs, fmt.Errorf("%w, invalid redis address %q, err: %v", ErrInvalidRedisConfig, c.Redis.Addr, err))
+	}
+	if c.Redis.DB < 0 {
+		errs = append(errs, fmt.Errorf("%w, redis db should be greater than or equal to 0 %q", ErrInvalidRedisConfig, c.Redis.DB))
+	}
+	if c.Redis.Password != "" && strings.TrimSpace(c.Redis.Password) == "" {
+		errs = append(errs, fmt.Errorf("%w, redis password should not be empty %q", ErrInvalidRedisConfig, c.Redis.Password))
+	}
+	c.Redis.Password = strings.TrimSpace(c.Redis.Password)
 
 	if c.Routes == nil || len(c.Routes) == 0 {
 		errs = append(errs, fmt.Errorf("%w, no routes defined", ErrInvalidRoutesConfig))

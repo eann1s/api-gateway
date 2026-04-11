@@ -7,75 +7,43 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 )
 
-func TestNewRedisRateLimiter(t *testing.T) {
+func TestNewLocalRateLimiter(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name    string
-		deps    RedisRateLimiterDeps
+		deps    LocalRateLimiterDeps
 		wantErr error
 	}{
 		{
 			name: "success",
-			deps: RedisRateLimiterDeps{
-				Redis: &redis.Client{},
+			deps: LocalRateLimiterDeps{
 				Config: TokenBucketConfig{
 					RefillRatePerSec: 10,
 					Capacity:         10,
 				},
-				KeyPrefix: "rl",
 			},
 			wantErr: nil,
 		},
 		{
-			name: "no redis client",
-			deps: RedisRateLimiterDeps{
-				Config: TokenBucketConfig{
-					RefillRatePerSec: 10,
-					Capacity:         10,
-				},
-				KeyPrefix: "rl",
-			},
-			wantErr: ErrInvalidDeps,
-		},
-		{
 			name: "invalid refill rate per sec",
-			deps: RedisRateLimiterDeps{
-				Redis: &redis.Client{},
+			deps: LocalRateLimiterDeps{
 				Config: TokenBucketConfig{
 					RefillRatePerSec: 0,
 					Capacity:         10,
 				},
-				KeyPrefix: "rl",
 			},
 			wantErr: ErrInvalidDeps,
 		},
 		{
 			name: "invalid capacity",
-			deps: RedisRateLimiterDeps{
-				Redis: &redis.Client{},
+			deps: LocalRateLimiterDeps{
 				Config: TokenBucketConfig{
 					RefillRatePerSec: 10,
 					Capacity:         0,
 				},
-				KeyPrefix: "rl",
-			},
-			wantErr: ErrInvalidDeps,
-		},
-		{
-			name: "invalid key prefix",
-			deps: RedisRateLimiterDeps{
-				Redis: &redis.Client{},
-				Config: TokenBucketConfig{
-					RefillRatePerSec: 10,
-					Capacity:         10,
-				},
-				KeyPrefix: "  ",
 			},
 			wantErr: ErrInvalidDeps,
 		},
@@ -86,7 +54,7 @@ func TestNewRedisRateLimiter(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := NewRedisRateLimiter(tt.deps)
+			_, err := NewLocalRateLimiter(tt.deps)
 			if tt.wantErr != nil && err == nil {
 				t.Errorf("wanted error %v, got nil", tt.wantErr)
 			}
@@ -100,11 +68,11 @@ func TestNewRedisRateLimiter(t *testing.T) {
 	}
 }
 
-func TestRedisRateLimiterAllow_EmptyIdentityReturnsError(t *testing.T) {
+func TestLocalRateLimiterAllow_EmptyIdentityReturnsError(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	r, _ := setupRedisLimiter(t)
+	r := setupLocalLimiter(t)
 
 	_, err := r.Allow(ctx, "  ")
 	if err == nil {
@@ -115,11 +83,11 @@ func TestRedisRateLimiterAllow_EmptyIdentityReturnsError(t *testing.T) {
 	}
 }
 
-func TestRedisRateLimiterAllow_FirstAllowedRemainingOne(t *testing.T) {
+func TestLocalRateLimiterAllow_FirstAllowedRemainingOne(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	r, _ := setupRedisLimiter(t)
+	r := setupLocalLimiter(t)
 
 	decision, err := r.Allow(ctx, "foo")
 	if err != nil {
@@ -133,11 +101,11 @@ func TestRedisRateLimiterAllow_FirstAllowedRemainingOne(t *testing.T) {
 	}
 }
 
-func TestRedisRateLimiterAllow_TwoAllowedRemainingZero(t *testing.T) {
+func TestLocalRateLimiterAllow_TwoAllowedRemainingZero(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	r, _ := setupRedisLimiter(t)
+	r := setupLocalLimiter(t)
 
 	_, err := r.Allow(ctx, "foo")
 	if err != nil {
@@ -156,11 +124,11 @@ func TestRedisRateLimiterAllow_TwoAllowedRemainingZero(t *testing.T) {
 	}
 }
 
-func TestRedisRateLimiterAllow_ThirdDenied(t *testing.T) {
+func TestLocalRateLimiterAllow_ThirdDenied(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	r, _ := setupRedisLimiter(t)
+	r := setupLocalLimiter(t)
 
 	_, err := r.Allow(ctx, "foo")
 	if err != nil {
@@ -187,14 +155,11 @@ func TestRedisRateLimiterAllow_ThirdDenied(t *testing.T) {
 	}
 }
 
-func TestRedisRateLimiterAllow_AfterSomeTimeAllowedAgain(t *testing.T) {
+func TestLocalRateLimiterAllow_AfterSomeTimeAllowedAgain(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	r, mr := setupRedisLimiter(t)
-
-	now := time.Now()
-	mr.SetTime(now)
+	r := setupLocalLimiter(t)
 
 	_, err := r.Allow(ctx, "foo")
 	if err != nil {
@@ -211,7 +176,7 @@ func TestRedisRateLimiterAllow_AfterSomeTimeAllowedAgain(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	mr.SetTime(now.Add(1 * time.Second))
+	time.Sleep(time.Second * 1)
 	decision, err := r.Allow(ctx, "foo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -224,11 +189,11 @@ func TestRedisRateLimiterAllow_AfterSomeTimeAllowedAgain(t *testing.T) {
 	}
 }
 
-func TestRedisRateLimiterAllow_Concurrent(t *testing.T) {
+func TestLocalRateLimiterAllow_Concurrent(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	r, _ := setupRedisLimiter(t)
+	r := setupLocalLimiter(t)
 
 	var wg sync.WaitGroup
 	var allowed atomic.Int32
@@ -273,26 +238,39 @@ func TestRedisRateLimiterAllow_Concurrent(t *testing.T) {
 	}
 }
 
-func setupRedisLimiter(t *testing.T) (*RedisRateLimiter, *miniredis.Miniredis) {
+func TestLocalRateLimiterCleanup(t *testing.T) {
+	t.Parallel()
+
+	r := setupLocalLimiter(t)
+
+	r.buckets["foo"] = &bucketState{
+		remaining: 1,
+		expiredAt: time.Now().Add(-time.Second),
+	}
+	r.CleanupExpired()
+
+	if _, ok := r.buckets["foo"]; ok {
+		t.Errorf("expected bucket to be deleted, got %v", r.buckets["foo"])
+		
+	}
+	if len(r.buckets) != 0 {
+		t.Errorf("expected buckets to be empty, got %v", len(r.buckets))
+	}
+}
+
+func setupLocalLimiter(t *testing.T) *LocalRateLimiter {
 	t.Helper()
 
-	mr, _ := miniredis.Run()
-	t.Cleanup(func() { mr.Close() })
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
-
-	deps := RedisRateLimiterDeps{
-		Redis: client,
+	deps := LocalRateLimiterDeps{
 		Config: TokenBucketConfig{
 			Capacity:         2,
 			RefillRatePerSec: 1,
 		},
-		KeyPrefix: "rl",
 	}
 
-	limiter, err := NewRedisRateLimiter(deps)
+	limiter, err := NewLocalRateLimiter(deps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return limiter, mr
+	return limiter
 }

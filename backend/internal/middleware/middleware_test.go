@@ -2,48 +2,63 @@ package middleware
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
+	"time"
 
+	"github.com/eann1s/rate-limiter/backend/internal/ratelimiter"
 	"github.com/rs/zerolog"
 )
 
-func TestRequestID_ReqIDDoesnotChange_IfAlreadyPresent(t *testing.T) {
+
+func TestRequestID(t *testing.T) {
 	t.Parallel()
-			
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("X-Request-ID", "123")
 
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	h := RequestID(next)
-
-	h.ServeHTTP(w, req)
-
-	if got := w.Header().Get("X-Request-ID"); got == "" || got != "123" {
-		t.Fatalf("expected %v, got %v", "123", got)
+	tests := []struct{
+		name string
+		reqID string
+	} {
+		{
+			name: "request id does not change if already present",
+			reqID: "123",
+		},
+		{
+			name: "request id is set if not present",
+		},
 	}
-}
 
-func TestRequestID_ReqIDIsSet_IfNotPresent(t *testing.T) {
-	t.Parallel()
+	for _, tt := range tests {
+		tt := tt
 
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	h := RequestID(next)
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			if tt.reqID != "" {
+				req.Header.Set("X-Request-ID", tt.reqID)
+			}
 
-	h.ServeHTTP(w, req)
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
 
-	if got := w.Header().Get("X-Request-ID"); got == "" {
-		t.Fatal("expected req id not to be empty")
+			h := Chain(next, RequestID)
+			h.ServeHTTP(w, req)
+
+			got := w.Header().Get("X-Request-ID")
+			if tt.reqID != "" && got != tt.reqID {
+				t.Fatalf("expected %v, got %v", tt.reqID, got)
+			}
+			if got == "" {
+				t.Fatal("expected req id not to be empty")
+			}
+		})
 	}
 }
 
@@ -149,6 +164,204 @@ func TestAccessLog(t *testing.T) {
 			}
 			if v, ok := got["message"]; !ok || v != tt.message {
 				t.Fatalf("expected %v, got %v", tt.message, v)
+			}
+		})
+	}
+}
+
+type MockRateLimiter struct {
+	gotKey string
+	allowFunc func(ctx context.Context, key string) (ratelimiter.Decision, error)
+}
+
+func (rl *MockRateLimiter) Allow(ctx context.Context, key string) (ratelimiter.Decision, error) {
+	rl.gotKey = key
+	if rl.allowFunc != nil {
+		return rl.allowFunc(ctx, key)
+	} else {
+		return ratelimiter.Decision{}, nil
+	}
+}
+
+func TestRateLimit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct{
+		name string
+		header http.Header
+		ip string
+		allowFunc func(ctx context.Context, key string) (ratelimiter.Decision, error)
+		wantNextCalled bool
+		wantStatusCode int
+		wantIdentityKey string
+		wantLogLevel string
+		wantLogMsg string
+		wantRetryAfter int
+	} {
+		{
+			name: "success api_key in X-Api-Key",
+			header: map[string][]string{
+				"X-Api-Key": {"foo"},
+			},
+			allowFunc: func(ctx context.Context, key string) (ratelimiter.Decision, error) {
+				return ratelimiter.Decision{
+					Allowed: true,
+					RetryAfter: 0,
+					Remaining: 3,
+				}, nil
+			},
+			wantNextCalled: true,
+			wantStatusCode: http.StatusOK,
+			wantIdentityKey: "api_key:foo",
+		},
+		{
+			name: "success api_key in Authorization Bearer",
+			header: map[string][]string{
+				"Authorization": {"Bearer foo"},
+			},
+			allowFunc: func(ctx context.Context, key string) (ratelimiter.Decision, error) {
+				return ratelimiter.Decision{
+					Allowed: true,
+					RetryAfter: 0,
+					Remaining: 3,
+				}, nil
+			},
+			wantNextCalled: true,
+			wantStatusCode: http.StatusOK,
+			wantIdentityKey: "api_key:foo",
+		},
+		{
+			name: "success ip fallback",
+			ip: "1.2.3.4",
+			allowFunc: func(ctx context.Context, key string) (ratelimiter.Decision, error) {
+				return ratelimiter.Decision{
+					Allowed: true,
+					RetryAfter: 0,
+					Remaining: 3,
+				}, nil
+			},
+			wantNextCalled: true,
+			wantStatusCode: http.StatusOK,
+			wantIdentityKey: "ip:1.2.3.4",
+		},
+		{
+			name: "success anonymous fallback without ip",
+			allowFunc: func(ctx context.Context, key string) (ratelimiter.Decision, error) {
+				return ratelimiter.Decision{
+					Allowed: true,
+					RetryAfter: 0,
+					Remaining: 3,
+				}, nil
+			},
+			wantNextCalled: true,
+			wantStatusCode: http.StatusOK,
+			wantIdentityKey: "anonymous",
+			wantLogLevel: zerolog.DebugLevel.String(),
+			wantLogMsg: "missing identity key",
+		},
+		{
+			name: "fallback to ip when apikey in wrong header",
+			header: map[string][]string{
+				"Wrong-Header": {"foo"},
+			},
+			ip: "1.2.3.4",
+			allowFunc: func(ctx context.Context, key string) (ratelimiter.Decision, error) {
+				return ratelimiter.Decision{
+					Allowed: true,
+					RetryAfter: 0,
+					Remaining: 3,
+				}, nil
+			},
+			wantNextCalled: true,
+			wantStatusCode: http.StatusOK,
+			wantIdentityKey: "ip:1.2.3.4",
+		},
+		{
+			name: "service unavailable when rl fails",
+			ip: "1.2.3.4",
+			allowFunc: func(ctx context.Context, key string) (ratelimiter.Decision, error) {
+				return ratelimiter.Decision{}, errors.New("failed to check rate limit")
+			},
+			wantNextCalled: false,
+			wantIdentityKey: "ip:1.2.3.4",
+			wantStatusCode: http.StatusServiceUnavailable,
+			wantLogLevel: zerolog.ErrorLevel.String(),
+			wantLogMsg: "failed to check rate limit",
+		},
+		{
+			name: "429 when decision allowed = false",
+			ip: "1.2.3.4",
+			allowFunc: func(ctx context.Context, key string) (ratelimiter.Decision, error) {
+				return ratelimiter.Decision{
+					Allowed: false,
+					RetryAfter: time.Second * 1,
+					Remaining: 0,
+				}, nil
+			},
+			wantNextCalled: false,
+			wantStatusCode: http.StatusTooManyRequests,
+			wantIdentityKey: "ip:1.2.3.4",
+			wantRetryAfter: 1,
+			wantLogLevel: zerolog.TraceLevel.String(),
+			wantLogMsg: "rate limit exceeded",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rl := &MockRateLimiter{
+				allowFunc: tt.allowFunc,
+			}
+
+			var buf bytes.Buffer
+			log := zerolog.New(&buf).With().Timestamp().Logger()
+			
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Header = tt.header
+			req.RemoteAddr = tt.ip
+
+			nextCalled := false
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				nextCalled = true
+				w.WriteHeader(http.StatusOK)
+			})
+
+			middleware := Chain(next, RateLimit(log, rl))
+			middleware.ServeHTTP(w, req)
+
+			res := w.Result()
+			if tt.wantNextCalled != nextCalled {
+				t.Fatalf("expected next called: %v, got %v", tt.wantNextCalled, nextCalled)
+			}
+			if res.StatusCode != tt.wantStatusCode {
+				t.Fatalf("expected status code: %v, got %v", tt.wantStatusCode, res.StatusCode)
+			}
+			if rl.gotKey != tt.wantIdentityKey {
+				t.Fatalf("expected identity key: %v, got %v", tt.wantIdentityKey, rl.gotKey)
+			}
+			if tt.wantRetryAfter == 0 && res.Header.Get("Retry-After") != "" {
+				t.Fatalf("expected retry after: %v, got %v", tt.wantRetryAfter, res.Header.Get("Retry-After"))
+			}
+			if tt.wantRetryAfter != 0 && res.Header.Get("Retry-After") != strconv.Itoa(tt.wantRetryAfter) {
+				t.Fatalf("expected retry after: %v, got %v", tt.wantRetryAfter, res.Header.Get("Retry-After"))
+			}
+
+			if tt.wantLogMsg != "" {
+				var got map[string]any
+				if err := json.NewDecoder(&buf).Decode(&got); err != nil {
+					t.Fatal(err)
+				}
+				if got["message"] != tt.wantLogMsg {
+					t.Fatalf("expected log message: %v, got %v", tt.wantLogMsg, buf.String())
+				}
+				if got["level"] != tt.wantLogLevel {
+					t.Fatalf("expected log level: %v, got %v", tt.wantLogLevel, buf.String())
+				}
 			}
 		})
 	}

@@ -17,13 +17,16 @@ import (
 	"github.com/eann1s/rate-limiter/backend/internal/middleware"
 	"github.com/eann1s/rate-limiter/backend/internal/obs"
 	"github.com/eann1s/rate-limiter/backend/internal/proxy"
+	"github.com/eann1s/rate-limiter/backend/internal/ratelimiter"
 	"github.com/eann1s/rate-limiter/backend/internal/readiness"
 	"github.com/eann1s/rate-limiter/backend/internal/router"
+	"github.com/eann1s/rate-limiter/backend/internal/sweeper"
 	http_admin "github.com/eann1s/rate-limiter/backend/internal/transport/http/admin"
 	http_public "github.com/eann1s/rate-limiter/backend/internal/transport/http/public"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 )
 
@@ -38,6 +41,9 @@ func main() {
 }
 
 func run() error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	configPath := flag.String("config", "./config.yml", "path to config file")
 	flag.Parse()
 
@@ -78,7 +84,52 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	publicSrv, err := newPublicSrv(log, cfg, router, p)
+
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: cfg.Redis.Addr,
+		Password: cfg.Redis.Password,
+		DB: cfg.Redis.DB,
+	})
+	defer redisClient.Close()
+	err = pingRedis(redisClient)
+	if err != nil {
+		return err
+	}
+
+	rrl, err := ratelimiter.NewRedisRateLimiter(ratelimiter.RedisRateLimiterDeps{
+		Redis: redisClient,
+		Config: ratelimiter.TokenBucketConfig{
+			Capacity: cfg.RateLimit.Capacity,
+			RefillRatePerSec: cfg.RateLimit.RefillRatePerSec,
+		},
+		KeyPrefix: cfg.RateLimit.KeyPrefix,
+	})
+	if err != nil {
+		return err
+	}
+
+	lrl, err := ratelimiter.NewLocalRateLimiter(ratelimiter.LocalRateLimiterDeps{
+		Config: ratelimiter.TokenBucketConfig{
+			Capacity: cfg.RateLimit.Capacity,
+			RefillRatePerSec: cfg.RateLimit.RefillRatePerSec,
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	sweeper, err := sweeper.NewSweeper(time.Minute * 1)
+	if err != nil {
+		return err
+	}
+	go sweeper.Run(ctx, lrl.CleanupExpired)
+
+	rl, err := ratelimiter.NewCompositeRateLimiter(rrl, lrl)
+	if err != nil {
+		return err
+	}
+
+	publicSrv, err := newPublicSrv(log, cfg, router, p, rl)
 	if err != nil {
 		return err
 	}
@@ -90,9 +141,6 @@ func run() error {
 	app := app.NewApp(readiness, cfg, log, publicSrv, adminSrv)
 
 	log.Info().Msg("starting gateway")
-	
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	if err := app.Run(ctx); err != nil {
 		log.Error().Err(err).Msg("shutdown with error")
@@ -103,7 +151,7 @@ func run() error {
 	return nil
 }
 
-func newPublicSrv(log zerolog.Logger, cfg config.Config, router *router.Router, p *proxy.Proxy) (*http.Server, error) {
+func newPublicSrv(log zerolog.Logger, cfg config.Config, router *router.Router, p *proxy.Proxy, rl ratelimiter.RateLimiter) (*http.Server, error) {
 	deps := http_public.Deps{
 		Router: router, 
 		Next: p.Next(),
@@ -113,7 +161,7 @@ func newPublicSrv(log zerolog.Logger, cfg config.Config, router *router.Router, 
 		return nil, err
 	}
 	mux := http_public.NewPublicMux(h)
-	handler := middleware.Chain(mux, middleware.RequestID, middleware.AccessLog(log))
+	handler := middleware.Chain(mux, middleware.RequestID, middleware.AccessLog(log), middleware.RateLimit(log, rl))
 	return &http.Server{
 		Handler: handler,
 		Addr: cfg.Listeners.Public.Addr,
@@ -218,5 +266,15 @@ func (r *RoundRobinSelector) SelectTarget(pool string, targets []string) (string
 		return target, nil
 	}
 	return "", ErrNoTargets
+}
+
+func pingRedis(r *redis.Client) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3 * time.Second)
+	defer cancel()
+	res := r.Ping(ctx)
+	if res.Err() != nil {
+		return fmt.Errorf("redis ping failed, err: %w", res.Err())
+	}
+	return nil
 }
 

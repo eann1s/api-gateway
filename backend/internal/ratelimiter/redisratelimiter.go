@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -40,8 +39,6 @@ return {0, tokens, retry_after}
 `
 
 var (
-	ErrInvalidDeps        = errors.New("invalid deps")
-	ErrInvalidIdentityKey = errors.New("invalid identityKey")
 	ErrInvalidLuaResponse = errors.New("invalid lua response")
 	ErrRedisFailure       = errors.New("redis failure")
 )
@@ -77,11 +74,10 @@ func NewRedisRateLimiter(deps RedisRateLimiterDeps) (*RedisRateLimiter, error) {
 func (r *RedisRateLimiter) Allow(ctx context.Context, identityKey string) (Decision, error) {
 	identityKey = strings.TrimSpace(identityKey)
 	if identityKey == "" {
-		return Decision{}, fmt.Errorf("%w, identityKey is required", ErrInvalidIdentityKey)
+		return Decision{}, fmt.Errorf("%w, identityKey should not be empty", ErrInvalidIdentityKey)
 	}
 	key := r.deps.KeyPrefix + ":" + identityKey
-	fullRefillMs := math.Ceil(float64(r.deps.Config.Capacity) / float64(r.deps.Config.RefillRatePerSec) * 1000)
-	ttl := int64(fullRefillMs * 2)
+	ttl := getTtl(r.deps.Config.Capacity, r.deps.Config.RefillRatePerSec)
 
 	raw := r.deps.Redis.Eval(ctx, luaScript, []string{key}, []any{ttl, r.deps.Config.RefillRatePerSec, r.deps.Config.Capacity})
 	res, err := raw.Int64Slice()

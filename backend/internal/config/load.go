@@ -72,6 +72,14 @@ func defaultConfig() Config {
 		Shutdown: ShutdownConfig{
 			Timeout: 5 * time.Second,
 		},
+		RateLimit: RateLimitConfig{
+			Capacity: 20,
+			RefillRatePerSec: 5,
+		},
+		Redis: RedisConfig{
+			Addr: "localhost:6379",
+			DB: 0,
+		},
 	}
 }
 

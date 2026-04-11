@@ -16,6 +16,8 @@ type Config struct {
 	Observability ObservabilityConfig `yaml:"observability"`
 	Defaults DefaultsConfig `yaml:"defaults"`
 	Shutdown ShutdownConfig `yaml:"shutdown"`
+	RateLimit RateLimitConfig `yaml:"rate_limit"`
+	Redis RedisConfig `yaml:"redis"`
 	Routes []RouteConfig `yaml:"routes"`
 	UpstreamPools []UpstreamPoolConfig `yaml:"upstream_pools"`
 }
@@ -59,12 +61,26 @@ type ShutdownConfig struct {
 	Timeout time.Duration `yaml:"timeout"`
 }
 
+
+type RateLimitConfig struct {
+	Capacity int64 `yaml:"capacity"`
+	RefillRatePerSec int64 `yaml:"refill_rate_per_sec"`
+	KeyPrefix string `yaml:"key_prefix"`
+}
+type RedisConfig struct {
+	Addr string `yaml:"addr"`
+	Password string `yaml:"password"`
+	DB int `yaml:"db"`
+}
+
+
 type RouteConfig struct {
 	ID string `yaml:"id"`
 	Host string `yaml:"host"`
 	PathPrefix string `yaml:"path_prefix"`
 	UpstreamPool string `yaml:"upstream_pool"`
 }
+
 
 type UpstreamPoolConfig struct {
 	ID string `yaml:"id"`

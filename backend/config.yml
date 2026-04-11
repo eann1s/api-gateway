@@ -15,6 +15,15 @@ defaults:
   body_limit: ${BODY_LIMIT:-1MB}
 shutdown:
   timeout: ${SHUTDOWN_TIMEOUT:-5s}
+rate_limit:
+  capacity: ${RATE_LIMIT_CAPACITY:-20}
+  refill_rate_per_sec: ${RATE_LIMIT_REFILL_RATE_PER_SEC:-5}
+  key_prefix: ${RATE_LIMIT_KEY_PREFIX:-rl}
+
+redis:
+  addr: ${REDIS_ADDR:-localhost:6379}
+  password: ${REDIS_PASSWORD:-}
+  db: ${REDIS_DB:-0}
 
 routes:
   - id: root

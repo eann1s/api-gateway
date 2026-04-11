@@ -28,6 +28,15 @@ defaults:
   body_limit: 1MB
 shutdown:
   timeout: 5s
+rate_limit:
+  capacity: 20
+  refill_rate_per_sec: 5
+  key_prefix: rl
+
+redis:
+  addr: localhost:6379
+  password: admin
+  db: 0
 
 routes:
   - id: root
@@ -127,6 +136,36 @@ func TestLoad_Fails_OnValidationError(t *testing.T) {
 			name: "invalid shutdown timeout",
 			yaml: strings.ReplaceAll(validYAML, "timeout: 5s", "timeout: -1s"),
 			wantErr: ErrInvalidShutdownConfig,
+		},
+		{
+			name: "invalid rate limit capacity",
+			yaml: strings.ReplaceAll(validYAML, "capacity: 20", "capacity: -10"),
+			wantErr: ErrInvalidRateLimitConfig,
+		},
+		{
+			name: "invalid rate limit refill rate per sec",
+			yaml: strings.ReplaceAll(validYAML, "refill_rate_per_sec: 5", "refill_rate_per_sec: -10"),
+			wantErr: ErrInvalidRateLimitConfig,
+		},
+		{
+			name: "invalid rate limit key prefix",
+			yaml: strings.ReplaceAll(validYAML, "key_prefix: rl", "key_prefix: \"  \""),
+			wantErr: ErrInvalidRateLimitConfig,
+		},
+		{
+			name: "invalid redis addr",
+			yaml: strings.ReplaceAll(validYAML, "addr: localhost:6379", "addr: invalid"),
+			wantErr: ErrInvalidRedisConfig,
+		},
+		{
+			name: "invalid redis db",
+			yaml: strings.ReplaceAll(validYAML, "db: 0", "db: -1"),
+			wantErr: ErrInvalidRedisConfig,
+		},
+		{
+			name: "invalid redis password",
+			yaml: strings.ReplaceAll(validYAML, "password: admin", "password: \"  \""),
+			wantErr: ErrInvalidRedisConfig,
 		},
 		{
 			name: "empty routes",
