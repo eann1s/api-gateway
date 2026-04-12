@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/eann1s/rate-limiter/backend/internal/middleware"
 	"github.com/eann1s/rate-limiter/backend/internal/routectx"
 	"github.com/eann1s/rate-limiter/backend/internal/router"
 )
@@ -52,5 +53,10 @@ func (h *Handlers) Root(w http.ResponseWriter, r *http.Request) {
 		UpstreamPool: route.UpstreamPool,
 	}
 	r = r.WithContext(routectx.WithRoute(r.Context(), rc))
+
+	v, ok := w.(middleware.RouteMetaWriter)
+	if ok {
+		v.SetRouteMeta(route.ID, route.UpstreamPool)
+	}
 	h.deps.Next(w, r)
 }

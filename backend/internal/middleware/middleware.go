@@ -4,19 +4,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/eann1s/rate-limiter/backend/internal/obs/metrics"
 	"github.com/eann1s/rate-limiter/backend/internal/requestid"
 	"github.com/rs/zerolog"
 )
 
-type statusWriter struct {
-	http.ResponseWriter
-	status int
-}
-
-func (w *statusWriter) WriteHeader(status int) {
-	w.status = status
-	w.ResponseWriter.WriteHeader(status)
-}
 
 type Middleware func(http.Handler) http.Handler
 
@@ -40,14 +32,15 @@ func RequestID(next http.Handler) http.Handler {
 	})
 }
 
-func AccessLog(log zerolog.Logger) Middleware {
+func AccessLog(log zerolog.Logger, m *metrics.Metrics) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			startTime := time.Now()
-			wrapper := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+			wrapper := &responseMetaWriter{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(wrapper, r)
 			duration := time.Since(startTime)
 			status := wrapper.status
+			statusClass := getStatusClass(status)
 
 			var level zerolog.Level
 			var msg string
@@ -65,11 +58,39 @@ func AccessLog(log zerolog.Logger) Middleware {
 				Int("status", wrapper.status).
 				Dur("duration", duration)
 
+
 			reqID, ok := requestid.FromContext(r.Context()) 
 			if ok && reqID != "" {
 				ev = ev.Str("request_id", reqID)
 			}
+
+			if wrapper.routeID == "" {
+				wrapper.routeID = "unknown"
+			}
+			if wrapper.upstreamPool == "" {
+				wrapper.upstreamPool = "unknown"
+			}
+
+			ev = ev.Str("route_id", wrapper.routeID).Str("upstream_pool", wrapper.upstreamPool)
+
 			ev.Msg(msg)
+
+			m.RequestsTotal.WithLabelValues(wrapper.routeID, r.Method, statusClass).Inc()
+			m.RequestDuration.WithLabelValues(wrapper.routeID, r.Method, statusClass).Observe(float64(duration.Seconds()))
 		})
+	}
+}
+
+func getStatusClass(status int) string {
+	if status < 200 {
+		return "1xx"
+	} else if status >= 200 && status < 300 {
+		return "2xx"
+	} else if status >= 300 && status < 400 {
+		return "3xx"
+	} else if status >= 400 && status < 500 {
+		return "4xx"
+	} else {
+		return "5xx"
 	}
 }

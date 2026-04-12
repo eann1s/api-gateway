@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eann1s/rate-limiter/backend/internal/obs/metrics"
 	"github.com/eann1s/rate-limiter/backend/internal/ratelimiter"
 	"github.com/rs/zerolog"
 )
@@ -110,6 +111,7 @@ func TestAccessLog(t *testing.T) {
 
 			var buf bytes.Buffer
 			log := zerolog.New(&buf).With().Timestamp().Logger()
+			m := metrics.NewMetrics()
 
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest(tt.method, tt.path, nil)
@@ -123,9 +125,9 @@ func TestAccessLog(t *testing.T) {
 
 			var h http.Handler
 			if tt.reqID != "" {
-				h = Chain(next, RequestID, AccessLog(log))
+				h = Chain(next, RequestID, AccessLog(log, m))
 			} else {
-				h = AccessLog(log)(next)
+				h = AccessLog(log, m)(next)
 			}
 
 			h.ServeHTTP(w, req)

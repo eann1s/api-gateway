@@ -16,6 +16,7 @@ import (
 	"github.com/eann1s/rate-limiter/backend/internal/config"
 	"github.com/eann1s/rate-limiter/backend/internal/middleware"
 	"github.com/eann1s/rate-limiter/backend/internal/obs"
+	"github.com/eann1s/rate-limiter/backend/internal/obs/metrics"
 	"github.com/eann1s/rate-limiter/backend/internal/proxy"
 	"github.com/eann1s/rate-limiter/backend/internal/ratelimiter"
 	"github.com/eann1s/rate-limiter/backend/internal/readiness"
@@ -58,9 +59,12 @@ func run() error {
 	}
 
 	reg := prometheus.NewRegistry()
+	m := metrics.NewMetrics()
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+		m.RequestDuration,
+		m.RequestsTotal,
 	)
 
 	routes := toRouterRoutes(cfg.Routes)
@@ -129,12 +133,12 @@ func run() error {
 		return err
 	}
 
-	publicSrv, err := newPublicSrv(log, cfg, router, p, rl)
+	publicSrv, err := newPublicSrv(log, cfg, router, p, rl, m)
 	if err != nil {
 		return err
 	}
 	readiness := &readiness.AtomicReadiness{}
-	adminSrv, err := newAdminSrv(log, cfg, readiness, reg)
+	adminSrv, err := newAdminSrv(log, cfg, readiness, reg, m)
 	if err != nil {
 		return err
 	}
@@ -151,7 +155,7 @@ func run() error {
 	return nil
 }
 
-func newPublicSrv(log zerolog.Logger, cfg config.Config, router *router.Router, p *proxy.Proxy, rl ratelimiter.RateLimiter) (*http.Server, error) {
+func newPublicSrv(log zerolog.Logger, cfg config.Config, router *router.Router, p *proxy.Proxy, rl ratelimiter.RateLimiter, m *metrics.Metrics) (*http.Server, error) {
 	deps := http_public.Deps{
 		Router: router, 
 		Next: p.Next(),
@@ -161,7 +165,7 @@ func newPublicSrv(log zerolog.Logger, cfg config.Config, router *router.Router, 
 		return nil, err
 	}
 	mux := http_public.NewPublicMux(h)
-	handler := middleware.Chain(mux, middleware.RequestID, middleware.AccessLog(log), middleware.RateLimit(log, rl))
+	handler := middleware.Chain(mux, middleware.RequestID, middleware.AccessLog(log, m), middleware.RateLimit(log, rl))
 	return &http.Server{
 		Handler: handler,
 		Addr: cfg.Listeners.Public.Addr,
@@ -170,14 +174,14 @@ func newPublicSrv(log zerolog.Logger, cfg config.Config, router *router.Router, 
 	}, nil
 }
 
-func newAdminSrv(log zerolog.Logger, cfg config.Config, readiness readiness.Readiness, reg *prometheus.Registry) (*http.Server, error) {
+func newAdminSrv(log zerolog.Logger, cfg config.Config, readiness readiness.Readiness, reg *prometheus.Registry, m *metrics.Metrics) (*http.Server, error) {
 	deps := http_admin.Deps{
 		Ready: readiness.IsReady,
 		Metrics: promhttp.HandlerFor(reg, promhttp.HandlerOpts{}),
 	}
 	h := http_admin.NewHandlers(deps)
 	mux := http_admin.NewAdminMux(h)
-	handler := middleware.Chain(mux, middleware.RequestID, middleware.AccessLog(log))
+	handler := middleware.Chain(mux, middleware.RequestID, middleware.AccessLog(log, m))
 	return &http.Server{
 		Handler: handler,
 		Addr: cfg.Listeners.Admin.Addr,
