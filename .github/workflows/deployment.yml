@@ -1,14 +1,11 @@
+name: deployment
+
 on:
   push:
     branches: [main, master, development, develop, dev, test, stage, prod, production]
   pull_request:
     branches: [main, master, development, develop, dev, test, stage, prod, production]
   workflow_dispatch:
-    inputs:
-      build_backend:
-        description: Build backend image
-        type: boolean
-        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref || github.event.pull_request.number }}
@@ -23,93 +20,43 @@ env:
   IMAGE_NAME: eann1s/rate-limiter
 
 jobs:
-  changes:
+  prepare:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
     outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-      docker_changed: ${{ steps.changes.outputs.docker }}
-      target_env: ${{ steps.target-env.outputs.target_env }}
-      compose: ${{ steps.env-variables.outputs.compose }}
-      secret: ${{ steps.env-variables.outputs.secret }}
-      backend_tag: ${{ steps.env-variables.outputs.backend_tag }}
+      target_env: ${{ steps.vars.outputs.target_env }}
+      compose: ${{ steps.vars.outputs.compose }}
+      secret: ${{ steps.vars.outputs.secret }}
+      backend_tag: ${{ steps.vars.outputs.backend_tag }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Check for changes
-        id: changes
-        uses: dorny/paths-filter@v3
-        with:
-          token: ${{ github.token }}
-          filters: |
-            backend:
-              - 'backend/**'
-            docker:
-              - 'docker-compose*.yml'
-              - 'docker-compose*.yaml'
-              - '.github/workflows/**'
-
-      - name: Compute build matrix
-        id: set-matrix
-        run: |
-          json='[]'
-          add() { json="$(jq -c --arg s "$1" '. + [{service:$s}]' <<<"$json")"; }
-          if [ "${{ inputs.build_backend }}" = "true" ] || \
-            [ "${{ steps.changes.outputs.backend }}" = "true" ]; then
-            add backend
-          fi
-          echo "matrix=$json" >> "$GITHUB_OUTPUT"
-      
-      - name: Derive target env
-        id: target-env
+      - name: Derive deploy variables
+        id: vars
         run: |
           case "${GITHUB_REF}" in
-            refs/heads/develop|refs/heads/dev|refs/heads/development) env=dev ;;
-            refs/heads/test) env=test ;;
-            refs/heads/stage) env=stage ;;
-            refs/heads/main|refs/heads/master|refs/heads/prod|refs/heads/production) env=prod ;;
-          esac
-          echo "target_env=$env" >> "$GITHUB_OUTPUT"
-      
-      - name: Derive variables based on env
-        id: env-variables
-        run: |
-          env="${{ steps.target-env.outputs.target_env }}"
-          case "$env" in
-            dev)
-              echo "compose=docker-compose.dev.yml" >>"$GITHUB_OUTPUT"
-              echo "secret=DOT_ENV_DEV" >>"$GITHUB_OUTPUT"
-              echo "backend_tag=dev-backend" >>"$GITHUB_OUTPUT"
+            refs/heads/main|refs/heads/master|refs/heads/prod|refs/heads/production)
+              echo "target_env=prod" >> "$GITHUB_OUTPUT"
+              echo "compose=docker-compose.prod.yml" >> "$GITHUB_OUTPUT"
+              echo "secret=DOT_ENV_PROD" >> "$GITHUB_OUTPUT"
+              echo "backend_tag=prod-backend" >> "$GITHUB_OUTPUT"
               ;;
-            test)
-              echo "compose=docker-compose.test.yml" >>"$GITHUB_OUTPUT"
-              echo "secret=DOT_ENV_TEST" >>"$GITHUB_OUTPUT"
-              echo "backend_tag=test-backend" >>"$GITHUB_OUTPUT"
+            refs/heads/*)
+              echo "target_env=dev" >> "$GITHUB_OUTPUT"
+              echo "compose=docker-compose.dev.yml" >> "$GITHUB_OUTPUT"
+              echo "secret=DOT_ENV_DEV" >> "$GITHUB_OUTPUT"
+              echo "backend_tag=dev-backend" >> "$GITHUB_OUTPUT"
               ;;
-            stage)
-              echo "compose=docker-compose.stage.yml" >>"$GITHUB_OUTPUT"
-              echo "secret=DOT_ENV_STAGE" >>"$GITHUB_OUTPUT"
-              echo "backend_tag=stage-backend" >>"$GITHUB_OUTPUT"
-              ;;
-            prod)
-              echo "compose=docker-compose.prod.yml" >>"$GITHUB_OUTPUT"
-              echo "secret=DOT_ENV_PROD" >>"$GITHUB_OUTPUT"
-              echo "backend_tag=prod-backend" >>"$GITHUB_OUTPUT"
+            *)
+              echo "target_env=" >> "$GITHUB_OUTPUT"
+              echo "compose=" >> "$GITHUB_OUTPUT"
+              echo "secret=" >> "$GITHUB_OUTPUT"
+              echo "backend_tag=" >> "$GITHUB_OUTPUT"
               ;;
           esac
-    
+
   ci-backend:
     runs-on: ubuntu-latest
-    needs: [changes]
     defaults:
       run:
         working-directory: backend
-    if: needs.changes.outputs.matrix != '[]'
     steps:
       - uses: actions/checkout@v4
 
@@ -117,36 +64,29 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
-      
+
       - name: Test
         run: go test ./...
-      
+
       - name: Vet
         run: go vet ./...
-      
+
       - name: Test race
         run: go test -race -cover ./internal/...
-      
+
       - name: GolangCI-Lint
         uses: golangci/golangci-lint-action@v3
         with:
           working-directory: backend
           args: --timeout=5m
 
-
-  build:
+  build-backend:
     runs-on: ubuntu-latest
-    needs: [changes, ci-backend]
-    if: needs.changes.outputs.matrix != '[]'
-    strategy:
-      matrix:
-        include: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    needs: [prepare, ci-backend]
+    if: github.event_name != 'pull_request'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      # - name: Set up QEMU
-      #   uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -164,12 +104,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch,suffix=-${{ matrix.service }}
-            type=ref,event=pr,suffix=-${{ matrix.service }}
-            type=sha,suffix=-${{ matrix.service }}
-            type=raw,value=${{ matrix.service }}-latest,enable={{is_default_branch}}
-            type=raw,value=${{ needs.changes.outputs.backend_tag }},enable=${{ needs.changes.outputs.backend_tag != '' }}
-      
+            type=ref,event=branch,suffix=-backend
+            type=sha,suffix=-backend
+            type=raw,value=${{ needs.prepare.outputs.backend_tag }},enable=${{ needs.prepare.outputs.backend_tag != '' }}
+
       - name: Compute version
         id: ver
         run: |
@@ -184,47 +122,34 @@ jobs:
         with:
           sbom: true
           provenance: true
-          context: ./${{ matrix.service }}
-          file: ${{ matrix.service }}/Dockerfile
-          # platforms: ${{ github.event_name == 'push' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          context: ./backend
+          file: backend/Dockerfile
           platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             GH_PAT=${{ secrets.GH_PAT }}
             VERSION=${{ steps.ver.outputs.version }}
-          secrets: |
-            npm_token=${{ secrets.NPM_TOKEN }}
-          retry: 3
-          retry-delay: 25s
 
   deploy:
     runs-on: ubuntu-latest
-    needs: [changes, ci-backend, build]
-    if: >
-      always() &&
-      needs.changes.outputs.target_env != '' &&
-      (
-        needs.changes.outputs.docker_changed == 'true' ||
-        needs.changes.outputs.matrix != '[]'
-      ) &&
-      (needs.build.result == 'success' || needs.build.result == 'skipped') &&
-      (needs.ci-backend.result == 'success' || needs.ci-backend.result == 'skipped')
-    environment: ${{ needs.changes.outputs.target_env }}
+    needs: [prepare, ci-backend, build-backend]
+    if: github.event_name == 'push' && needs.prepare.outputs.target_env != ''
+    environment: ${{ needs.prepare.outputs.target_env }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Create deployment environment file
         run: |
-          echo "${{ secrets[needs.changes.outputs.secret] }}" | base64 -d > ".env.${{ needs.changes.outputs.target_env }}"
-          printf '\n' >> ".env.${{ needs.changes.outputs.target_env }}"
-          echo "BACKEND_DOCKER_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.changes.outputs.backend_tag }}" >> ".env.${{ needs.changes.outputs.target_env }}"
-          chmod 644 ".env.${{ needs.changes.outputs.target_env }}"
+          echo "${{ secrets[needs.prepare.outputs.secret] }}" | base64 -d > ".env.${{ needs.prepare.outputs.target_env }}"
+          printf '\n' >> ".env.${{ needs.prepare.outputs.target_env }}"
+          echo "BACKEND_DOCKER_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.backend_tag }}" >> ".env.${{ needs.prepare.outputs.target_env }}"
+          chmod 644 ".env.${{ needs.prepare.outputs.target_env }}"
 
       - name: Transfer updated files
         uses: appleboy/scp-action@v0.1.7
@@ -232,8 +157,8 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          source: ".env.${{ needs.changes.outputs.target_env }},${{ needs.changes.outputs.compose }}"
-          target: "/home/${{ secrets.SERVER_USERNAME }}/${{ needs.changes.outputs.target_env }}"
+          source: ".env.${{ needs.prepare.outputs.target_env }},${{ needs.prepare.outputs.compose }}"
+          target: "/home/${{ secrets.SERVER_USERNAME }}/${{ needs.prepare.outputs.target_env }}"
 
       - name: Deploy to server
         uses: appleboy/ssh-action@v1.0.3
@@ -245,180 +170,14 @@ jobs:
           script: |
             set -e
 
-            env=${{ needs.changes.outputs.target_env }}
-            compose_file=${{ needs.changes.outputs.compose }}
+            env=${{ needs.prepare.outputs.target_env }}
+            compose_file=${{ needs.prepare.outputs.compose }}
             env_file=".env.${env}"
-            project_dir="/home/${{ secrets.SERVER_USERNAME }}/${{ needs.changes.outputs.target_env }}"
-            oneshot_services="migration seeder"
-            running_timeout=300
-            oneshot_timeout=120
+            project_dir="/home/${{ secrets.SERVER_USERNAME }}/${{ needs.prepare.outputs.target_env }}"
 
-            log() {
-              echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
-            }
-
-            log "Starting deploy script (env=${env}, compose_file=${compose_file})"
             cd "$project_dir"
-            log "Changed directory to ${project_dir}"
 
-            is_oneshot_service() {
-              for oneshot in $oneshot_services; do
-                if [ "$1" = "$oneshot" ]; then
-                  return 0
-                fi
-              done
-              return 1
-            }
-
-            check_services() {
-              set +e
-
-              issues=0
-              log "check_services: start"
-
-              services=$(docker compose --env-file "$env_file" -f "$compose_file" config --services)
-              rc=$?
-              if [ $rc -ne 0 ]; then
-                log "check_services: ERROR docker compose config --services failed with code ${rc}"
-                set -e
-                return 1
-              fi
-
-              log "check_services: services list:"
-              for svc in $services; do
-                log "  - ${svc}"
-              done
-
-              for service in $services; do
-                log "check_services: inspecting service '${service}'"
-
-                if is_oneshot_service "$service"; then
-                  log "check_services: '${service}' is configured as oneshot -> skipping checks"
-                  continue
-                fi
-
-                container_id=$(docker compose --env-file "$env_file" -f "$compose_file" ps -a -q "$service" | tail -n 1 | tr -d '\r')
-                rc=$?
-                if [ $rc -ne 0 ]; then
-                  log "check_services: ERROR docker compose ps for service '${service}' failed with code ${rc}"
-                  issues=1
-                  continue
-                fi
-
-                if [ -z "$container_id" ]; then
-                  echo "Service $service has no container yet"
-                  issues=1
-                  continue
-                fi
-
-                inspect=$(docker inspect -f '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.State.ExitCode}}' "$container_id")
-                rc=$?
-                if [ $rc -ne 0 ]; then
-                  echo "Unable to inspect container for service $service (container_id=${container_id}), docker inspect rc=${rc}"
-                  issues=1
-                  continue
-                fi
-
-                if [ -z "$inspect" ]; then
-                  echo "Empty inspect result for service $service (container_id=${container_id})"
-                  issues=1
-                  continue
-                fi
-
-                state=${inspect%%|*}
-                rest=${inspect#*|}
-                health=${rest%%|*}
-                rest=${rest#*|}
-                exit_code=${rest%%|*}
-
-                if [ "$state" = "running" ]; then
-                  log "check_services: ${service} state=running health=${health} exit=${exit_code}"
-                  if [ "$health" = "unhealthy" ]; then
-                    echo "Service $service is running but unhealthy"
-                    issues=1
-                  fi
-                else
-                  log "check_services: ${service} state=${state} health=${health} exit=${exit_code}"
-                  echo "Service $service is not running (state=${state}, exit=${exit_code})"
-                  issues=1
-                fi
-              done
-
-              if [ $issues -eq 0 ]; then
-                log "check_services: completed, no issues"
-                set -e
-                return 0
-              else
-                log "check_services: completed, issues detected"
-                set -e
-                return 1
-              fi
-            }
-
-            wait_for_services() {
-              set +e
-              timeout_running=$1
-              timeout_one_shot=$2
-              interval=10
-              elapsed_running=0
-              elapsed_one_shot=0
-
-              log "wait_for_services: start (running_timeout=${timeout_running}s, oneshot_timeout=${timeout_one_shot}s, interval=${interval}s)"
-
-              while [ $elapsed_running -lt $timeout_running ] || [ $elapsed_one_shot -lt $timeout_one_shot ]; do
-                log "wait_for_services: check at elapsed_running=${elapsed_running}s, elapsed_one_shot=${elapsed_one_shot}s"
-
-                check_services
-                rc=$?
-                if [ $rc -eq 0 ]; then
-                  log "wait_for_services: all services healthy/acceptable"
-                  set -e
-                  return 0
-                else
-                  log "wait_for_services: check_services reported issues (rc=${rc}), will retry after ${interval}s"
-                fi
-
-                sleep $interval
-
-                if [ $elapsed_running -lt $timeout_running ]; then
-                  elapsed_running=$((elapsed_running + interval))
-                fi
-                if [ $elapsed_one_shot -lt $timeout_one_shot ]; then
-                  elapsed_one_shot=$((elapsed_one_shot + interval))
-                fi
-              done
-
-              log "wait_for_services: timeout reached without all services healthy"
-              set -e
-              return 1
-            }
-
-            log "Logging in to container registry ${{ env.REGISTRY }}"
-            if ! echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin; then
-              log "ERROR: docker login failed"
-              exit 1
-            fi
-            log "docker login succeeded"
-
-            log "Running docker compose pull (env_file=${env_file}, compose_file=${compose_file})"
-            if ! docker compose --env-file "$env_file" -f "$compose_file" pull; then
-              log "ERROR: docker compose pull failed"
-              exit 1
-            fi
-            log "docker compose pull finished successfully"
-
-            log "Running docker compose up -d"
-            if ! docker compose --env-file "$env_file" -f "$compose_file" up -d; then
-              log "ERROR: docker compose up -d failed"
-              exit 1
-            fi
-            log "docker compose up -d finished successfully"
-
-            log "Starting wait_for_services"
-            if ! wait_for_services "$running_timeout" "$oneshot_timeout"; then
-              log "ERROR: wait_for_services timed out or detected issues"
-              exit 1
-            fi
-
-            log "Deployment finished successfully."
-            exit 0
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+            docker compose --env-file "$env_file" -f "$compose_file" pull
+            docker compose --env-file "$env_file" -f "$compose_file" up -d
+            docker compose --env-file "$env_file" -f "$compose_file" ps

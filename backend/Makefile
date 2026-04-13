@@ -40,4 +40,4 @@ lint: ## Lint
 	golangci-lint run
 
 clean: ## Remove binary
-	rm -f $(BIN_DIR)
+	rm -rf $(BIN_DIR)
