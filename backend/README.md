@@ -12,12 +12,24 @@ Go backend service for API gateway and rate-limiter workloads.
 - Structured JSON logging (`zerolog`)
 - Request middleware: request ID + access logs
 - Router core module (`internal/router`) with host + path-prefix matching
+- Reverse proxy to upstream pools (round-robin target selection)
+- Rate limiting:
+  - Redis token bucket limiter
+  - Local limiter fallback via composite limiter
+  - `429` with `Retry-After`
+- Prometheus request metrics:
+  - total requests
+  - request duration histogram
 
 ## Requirements
 
 - Go `1.25+`
 - `make`
 - `golangci-lint` (optional, for `make lint`)
+- Redis (`localhost:6379` by default)
+- `curl` (for smoke script)
+- `python3` (for local upstream servers in smoke script)
+- `sudo` access (smoke script temporarily edits `/etc/hosts`)
 
 ## Quick Start
 
@@ -26,6 +38,12 @@ From the `backend` directory:
 ```bash
 cd backend
 go run ./cmd/rate-limiter --config ./config.yml
+```
+
+Start Redis first (from repo root):
+
+```bash
+docker compose -f docker-compose.local.yml up -d redis
 ```
 
 By default:
@@ -90,6 +108,28 @@ make build APP=rate-limiter
 ./bin/rate-limiter --config ./config.yml
 ```
 
+## Smoke Test
+
+From repo root:
+
+```bash
+./scripts/smoke/gateway_smoke.sh
+```
+
+What it validates:
+
+- admin endpoints: `/readyz`, `/healthz`, `/metrics`
+- public unknown host/path -> `404`
+- oversized body -> `413`
+- routed success path -> `200`
+- rate-limit burst -> `429` + `Retry-After`
+
+Notes:
+
+- the script starts temporary local upstream HTTP servers on `8081` and `8082`
+- the script adds/removes a temporary `svc-a` entry in `/etc/hosts`
+- expected to prompt for `sudo` at start
+
 ## Docker
 
 Build:
@@ -125,8 +165,11 @@ cmd/rate-limiter/        # entrypoint
 internal/app/            # lifecycle orchestration
 internal/config/         # config load + validation
 internal/router/         # route normalization and matching core
+internal/proxy/          # reverse proxy logic
+internal/ratelimiter/    # redis/local/composite limiters
 internal/transport/http/ # admin/public handlers and mux
 internal/middleware/     # request id and access logs
-internal/obs/            # logger setup
+internal/obs/            # logger and metrics setup
 internal/readiness/      # readiness state/probe abstraction
+internal/sweeper/        # periodic cleanup jobs
 ```
