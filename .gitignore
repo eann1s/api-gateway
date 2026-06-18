@@ -6,3 +6,5 @@ bin/
 .env.prod
 
 .DS_Store
+
+local/

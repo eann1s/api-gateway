@@ -17,7 +17,3 @@ make run
 ```
 
 For full backend documentation, see [`backend/README.md`](./backend/README.md).
-
-## CI/CD
-
-GitHub workflow definitions are under [`.github/workflows/`](./.github/workflows).
